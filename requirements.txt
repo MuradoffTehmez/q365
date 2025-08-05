@@ -1,0 +1,59 @@
+# Core Django
+Django==4.2.7
+djangorestframework==3.14.0
+
+# Database
+psycopg2-binary==2.9.7
+
+# Authentication
+djangorestframework-simplejwt==5.3.0
+
+# CORS
+django-cors-headers==4.3.1
+
+# Documentation
+drf-spectacular==0.26.5
+
+# Pagination
+django-filter==23.5
+
+# File handling
+Pillow==10.1.0
+
+# Email sending
+django-anymail==0.25.0
+
+# Celery for background tasks
+celery==5.3.4
+redis==5.0.1
+
+# WebSockets
+channels==4.0.0
+channels-redis==4.1.0
+
+# Testing
+pytest==7.4.3
+pytest-django==4.7.0
+factory-boy==3.3.0
+coverage==7.3.2
+
+# Development tools
+django-debug-toolbar==4.2.0
+django-extensions==3.2.3
+
+# Environment management
+python-decouple==3.8
+
+# Date/time handling
+python-dateutil==2.8.2
+
+# JSON handling
+jsonschema==4.20.0
+
+# API testing
+requests==2.31.0
+
+# Code quality
+flake8==6.1.0
+black==23.11.0
+isort==5.12.0
