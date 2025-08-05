@@ -1,7 +1,8 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
-from core.models import User, Department, Sector, Team
+from decimal import Decimal
+import uuid
 
 class Employee(models.Model):
     """Employee model"""
@@ -33,6 +34,7 @@ class Employee(models.Model):
         ('retired', _('Retired')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(
         User,
         on_delete=models.CASCADE,
@@ -72,21 +74,21 @@ class Employee(models.Model):
     hire_date = models.DateField(_('hire date'))
     termination_date = models.DateField(_('termination date'), null=True, blank=True)
     department = models.ForeignKey(
-        Department,
+        'core.Department',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='employees'
     )
     sector = models.ForeignKey(
-        Sector,
+        'core.Sector',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='employees'
     )
     team = models.ForeignKey(
-        Team,
+        'core.Team',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -144,9 +146,9 @@ class Employee(models.Model):
         delta = end_date - self.hire_date
         return delta.days // 365
 
-
 class Skill(models.Model):
     """Skill model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     description = models.TextField(_('description'), blank=True)
     category = models.CharField(_('category'), max_length=100, blank=True)
@@ -162,7 +164,6 @@ class Skill(models.Model):
     def __str__(self):
         return self.name
 
-
 class EmployeeSkill(models.Model):
     """Employee skill model"""
     PROFICIENCY_CHOICES = (
@@ -173,6 +174,7 @@ class EmployeeSkill(models.Model):
         (5, _('Expert')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     employee = models.ForeignKey(
         Employee,
         on_delete=models.CASCADE,
@@ -205,7 +207,14 @@ class EmployeeSkill(models.Model):
     
     def __str__(self):
         return f"{self.employee.full_name} - {self.skill.name}"
-
+    
+    @property
+    def is_certification_expired(self):
+        """Check if certification is expired"""
+        return (
+            self.certification_expiry and 
+            self.certification_expiry < timezone.now().date()
+        )
 
 class Certification(models.Model):
     """Certification model"""
@@ -239,7 +248,6 @@ class Certification(models.Model):
         if not self.expiry_date:
             return False
         return self.expiry_date < timezone.now().date()
-
 
 class Education(models.Model):
     """Education model"""
@@ -286,7 +294,6 @@ class Education(models.Model):
     def __str__(self):
         return f"{self.employee.full_name} - {self.degree} at {self.institution}"
 
-
 class Experience(models.Model):
     """Experience model"""
     employee = models.ForeignKey(
@@ -309,7 +316,6 @@ class Experience(models.Model):
     
     def __str__(self):
         return f"{self.employee.full_name} - {self.position} at {self.company}"
-
 
 class LeaveType(models.Model):
     """Leave type model"""
@@ -335,7 +341,6 @@ class LeaveType(models.Model):
     
     def __str__(self):
         return self.name
-
 
 class Leave(models.Model):
     """Leave model"""
@@ -411,7 +416,6 @@ class Leave(models.Model):
         
         super().save(*args, **kwargs)
 
-
 class LeaveBalance(models.Model):
     """Leave balance model"""
     employee = models.ForeignKey(
@@ -458,7 +462,6 @@ class LeaveBalance(models.Model):
         # Calculate remaining days
         self.remaining_days = self.total_days - self.used_days
         super().save(*args, **kwargs)
-
 
 class Benefit(models.Model):
     """Benefit model"""
@@ -527,7 +530,6 @@ class Benefit(models.Model):
     def __str__(self):
         return f"{self.employee.full_name} - {self.name}"
 
-
 class Training(models.Model):
     """Training model"""
     STATUS_CHOICES = (
@@ -548,7 +550,8 @@ class Training(models.Model):
         max_digits=10,
         decimal_places=2,
         null=True,
-        blank=True
+        blank=True,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     status = models.CharField(
         _('status'),
@@ -579,7 +582,6 @@ class Training(models.Model):
     
     def __str__(self):
         return self.name
-
 
 class TrainingParticipant(models.Model):
     """Training participant model"""
@@ -627,7 +629,6 @@ class TrainingParticipant(models.Model):
     
     def __str__(self):
         return f"{self.employee.full_name} - {self.training.name}"
-
 
 class PerformanceReview(models.Model):
     """Performance review model"""
@@ -689,7 +690,6 @@ class PerformanceReview(models.Model):
     
     def __str__(self):
         return f"{self.employee.full_name} - {self.title}"
-
 
 class PerformanceGoal(models.Model):
     """Performance goal model"""
@@ -757,7 +757,6 @@ class PerformanceGoal(models.Model):
     
     def __str__(self):
         return f"{self.employee.full_name} - {self.title}"
-
 
 class Document(models.Model):
     """Document model"""

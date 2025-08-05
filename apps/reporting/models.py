@@ -1,7 +1,7 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
-from core.models import User, Organization
+import uuid
 
 class Report(models.Model):
     """Report model"""
@@ -18,6 +18,7 @@ class Report(models.Model):
         ('archived', _('Archived')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     description = models.TextField(_('description'), blank=True)
     type = models.CharField(
@@ -35,7 +36,7 @@ class Report(models.Model):
     config = models.JSONField(_('config'), default=dict, blank=True)
     is_public = models.BooleanField(_('is public'), default=False)
     allowed_users = models.ManyToManyField(
-        User,
+        settings.AUTH_USER_MODEL,
         related_name='allowed_reports',
         blank=True
     )
@@ -45,7 +46,7 @@ class Report(models.Model):
         blank=True
     )
     organization = models.ForeignKey(
-        Organization,
+        'core.Organization',
         on_delete=models.CASCADE,
         related_name='reports'
     )
@@ -67,15 +68,15 @@ class Report(models.Model):
     def __str__(self):
         return self.name
 
-
 class Dashboard(models.Model):
     """Dashboard model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     description = models.TextField(_('description'), blank=True)
     layout = models.JSONField(_('layout'), default=dict, blank=True)
     is_public = models.BooleanField(_('is public'), default=False)
     allowed_users = models.ManyToManyField(
-        User,
+        settings.AUTH_USER_MODEL,
         related_name='allowed_dashboards',
         blank=True
     )
@@ -85,7 +86,7 @@ class Dashboard(models.Model):
         blank=True
     )
     organization = models.ForeignKey(
-        Organization,
+        'core.Organization',
         on_delete=models.CASCADE,
         related_name='dashboards'
     )
@@ -106,7 +107,6 @@ class Dashboard(models.Model):
     
     def __str__(self):
         return self.name
-
 
 class DashboardWidget(models.Model):
     """Dashboard widget model"""
@@ -144,7 +144,6 @@ class DashboardWidget(models.Model):
     def __str__(self):
         return f"{self.dashboard.name} - {self.title}"
 
-
 class KPI(models.Model):
     """KPI model"""
     TYPE_CHOICES = (
@@ -162,6 +161,7 @@ class KPI(models.Model):
         ('max', _('Max')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     description = models.TextField(_('description'), blank=True)
     type = models.CharField(
@@ -187,7 +187,7 @@ class KPI(models.Model):
     unit = models.CharField(_('unit'), max_length=20, blank=True)
     is_public = models.BooleanField(_('is public'), default=False)
     allowed_users = models.ManyToManyField(
-        User,
+        settings.AUTH_USER_MODEL,
         related_name='allowed_kpis',
         blank=True
     )
@@ -197,7 +197,7 @@ class KPI(models.Model):
         blank=True
     )
     organization = models.ForeignKey(
-        Organization,
+        'core.Organization',
         on_delete=models.CASCADE,
         related_name='kpis'
     )
@@ -218,7 +218,6 @@ class KPI(models.Model):
     
     def __str__(self):
         return self.name
-
 
 class ScheduledReport(models.Model):
     """Scheduled report model"""
@@ -253,7 +252,7 @@ class ScheduledReport(models.Model):
         choices=FORMAT_CHOICES
     )
     recipients = models.ManyToManyField(
-        User,
+        settings.AUTH_USER_MODEL,
         related_name='scheduled_reports'
     )
     additional_emails = models.TextField(_('additional emails'), blank=True)

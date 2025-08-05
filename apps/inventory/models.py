@@ -2,10 +2,11 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
 from decimal import Decimal
-from core.models import User, Organization
+import uuid
 
 class ProductCategory(models.Model):
     """Product category model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     code = models.CharField(_('code'), max_length=20, unique=True)
     description = models.TextField(_('description'), blank=True)
@@ -16,6 +17,7 @@ class ProductCategory(models.Model):
         blank=True,
         related_name='children'
     )
+    image = models.ImageField(_('image'), upload_to='category_images/', blank=True, null=True)
     is_active = models.BooleanField(_('is active'), default=True)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     updated_at = models.DateTimeField(_('updated at'), auto_now=True)
@@ -35,7 +37,6 @@ class ProductCategory(models.Model):
             return f"{self.parent.full_code}.{self.code}"
         return self.code
 
-
 class Product(models.Model):
     """Product model"""
     TYPE_CHOICES = (
@@ -50,6 +51,13 @@ class Product(models.Model):
         ('out_of_stock', _('Out of Stock')),
     )
     
+    TRACKING_CHOICES = (
+        ('batch', _('Batch')),
+        ('serial', _('Serial')),
+        ('none', _('None')),
+    )
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     code = models.CharField(_('code'), max_length=50, unique=True)
     description = models.TextField(_('description'), blank=True)
@@ -76,29 +84,39 @@ class Product(models.Model):
         _('price'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     cost = models.DecimalField(
         _('cost'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     quantity = models.DecimalField(
         _('quantity'),
         max_digits=10,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     reorder_point = models.DecimalField(
         _('reorder point'),
         max_digits=10,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     unit = models.CharField(_('unit'), max_length=20, default='pcs')
     barcode = models.CharField(_('barcode'), max_length=100, blank=True)
     sku = models.CharField(_('SKU'), max_length=100, blank=True)
+    tracking = models.CharField(
+        _('tracking'),
+        max_length=20,
+        choices=TRACKING_CHOICES,
+        default='none'
+    )
     weight = models.DecimalField(
         _('weight'),
         max_digits=10,
@@ -137,10 +155,15 @@ class Product(models.Model):
     def is_below_reorder_point(self):
         """Check if product quantity is below reorder point"""
         return self.quantity <= self.reorder_point
-
+    
+    @property
+    def total_value(self):
+        """Calculate total value of product stock"""
+        return self.quantity * self.cost
 
 class ProductImage(models.Model):
     """Product image model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
@@ -150,6 +173,7 @@ class ProductImage(models.Model):
     alt_text = models.CharField(_('alt text'), max_length=255, blank=True)
     order = models.PositiveIntegerField(_('order'), default=0)
     is_primary = models.BooleanField(_('is primary'), default=False)
+    created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     
     class Meta:
         verbose_name = _('Product Image')
@@ -159,9 +183,47 @@ class ProductImage(models.Model):
     def __str__(self):
         return f"{self.product.name} - Image {self.order}"
 
+class ProductVariant(models.Model):
+    """Product variant model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='variants'
+    )
+    name = models.CharField(_('name'), max_length=255)
+    sku = models.CharField(_('SKU'), max_length=100, blank=True)
+    barcode = models.CharField(_('barcode'), max_length=100, blank=True)
+    price = models.DecimalField(
+        _('price'),
+        max_digits=15,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    quantity = models.DecimalField(
+        _('quantity'),
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    attributes = models.JSONField(_('attributes'), default=dict, blank=True)
+    is_active = models.BooleanField(_('is active'), default=True)
+    created_at = models.DateTimeField(_('created at'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('updated at'), auto_now=True)
+    
+    class Meta:
+        verbose_name = _('Product Variant')
+        verbose_name_plural = _('Product Variants')
+        ordering = ['name']
+    
+    def __str__(self):
+        return f"{self.product.name} - {self.name}"
 
 class Vendor(models.Model):
     """Vendor model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     code = models.CharField(_('code'), max_length=50, unique=True)
     contact_person = models.CharField(_('contact person'), max_length=100, blank=True)
@@ -183,9 +245,9 @@ class Vendor(models.Model):
     def __str__(self):
         return f"{self.code} - {self.name}"
 
-
 class Warehouse(models.Model):
     """Warehouse model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     code = models.CharField(_('code'), max_length=50, unique=True)
     address = models.TextField(_('address'), blank=True)
@@ -210,9 +272,9 @@ class Warehouse(models.Model):
     def __str__(self):
         return f"{self.code} - {self.name}"
 
-
 class Stock(models.Model):
     """Stock model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
@@ -227,21 +289,25 @@ class Stock(models.Model):
         _('quantity'),
         max_digits=10,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     reserved_quantity = models.DecimalField(
         _('reserved quantity'),
         max_digits=10,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     available_quantity = models.DecimalField(
         _('available quantity'),
         max_digits=10,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     location = models.CharField(_('location'), max_length=100, blank=True)
+    bin_location = models.CharField(_('bin location'), max_length=100, blank=True)
     last_count_date = models.DateField(_('last count date'), null=True, blank=True)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     updated_at = models.DateTimeField(_('updated at'), auto_now=True)
@@ -267,7 +333,6 @@ class Stock(models.Model):
         product.quantity = total_quantity
         product.save()
 
-
 class StockEntry(models.Model):
     """Stock entry model"""
     TYPE_CHOICES = (
@@ -277,6 +342,7 @@ class StockEntry(models.Model):
         ('transfer', _('Transfer')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
@@ -295,7 +361,8 @@ class StockEntry(models.Model):
     quantity = models.DecimalField(
         _('quantity'),
         max_digits=10,
-        decimal_places=2
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
     )
     reference = models.CharField(_('reference'), max_length=255, blank=True)
     notes = models.TextField(_('notes'), blank=True)
@@ -338,7 +405,6 @@ class StockEntry(models.Model):
         
         stock.save()
 
-
 class PurchaseOrder(models.Model):
     """Purchase order model"""
     STATUS_CHOICES = (
@@ -350,6 +416,7 @@ class PurchaseOrder(models.Model):
         ('cancelled', _('Cancelled')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     number = models.CharField(_('number'), max_length=50, unique=True)
     date = models.DateField(_('date'))
     vendor = models.ForeignKey(
@@ -372,31 +439,36 @@ class PurchaseOrder(models.Model):
         _('subtotal'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     tax_rate = models.DecimalField(
         _('tax rate'),
         max_digits=5,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     tax_amount = models.DecimalField(
         _('tax amount'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     shipping_cost = models.DecimalField(
         _('shipping cost'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     total = models.DecimalField(
         _('total'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     notes = models.TextField(_('notes'), blank=True)
     created_by = models.ForeignKey(
@@ -441,9 +513,9 @@ class PurchaseOrder(models.Model):
         
         super().save(*args, **kwargs)
 
-
 class PurchaseOrderLine(models.Model):
     """Purchase order line model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     purchase_order = models.ForeignKey(
         PurchaseOrder,
         on_delete=models.CASCADE,
@@ -455,16 +527,46 @@ class PurchaseOrderLine(models.Model):
         related_name='purchase_order_lines'
     )
     description = models.CharField(_('description'), max_length=255, blank=True)
-    quantity = models.DecimalField(_('quantity'), max_digits=10, decimal_places=2, default=1)
-    unit_price = models.DecimalField(_('unit price'), max_digits=15, decimal_places=2)
-    discount = models.DecimalField(_('discount'), max_digits=5, decimal_places=2, default=0)
-    tax_rate = models.DecimalField(_('tax rate'), max_digits=5, decimal_places=2, default=0)
-    total = models.DecimalField(_('total'), max_digits=15, decimal_places=2, default=0)
+    quantity = models.DecimalField(
+        _('quantity'),
+        max_digits=10,
+        decimal_places=2,
+        default=1,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    unit_price = models.DecimalField(
+        _('unit price'),
+        max_digits=15,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    discount = models.DecimalField(
+        _('discount'),
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('100.00'))]
+    )
+    tax_rate = models.DecimalField(
+        _('tax rate'),
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    total = models.DecimalField(
+        _('total'),
+        max_digits=15,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
     received_quantity = models.DecimalField(
         _('received quantity'),
         max_digits=10,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     order = models.PositiveIntegerField(_('order'), default=0)
     
@@ -492,114 +594,6 @@ class PurchaseOrderLine(models.Model):
         po.subtotal = subtotal
         po.save()
 
-
-class PurchaseReceipt(models.Model):
-    """Purchase receipt model"""
-    purchase_order = models.ForeignKey(
-        PurchaseOrder,
-        on_delete=models.CASCADE,
-        related_name='receipts'
-    )
-    number = models.CharField(_('number'), max_length=50, unique=True)
-    date = models.DateField(_('date'))
-    notes = models.TextField(_('notes'), blank=True)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='created_purchase_receipts'
-    )
-    created_at = models.DateTimeField(_('created at'), auto_now_add=True)
-    
-    class Meta:
-        verbose_name = _('Purchase Receipt')
-        verbose_name_plural = _('Purchase Receipts')
-        ordering = ['-date', '-number']
-    
-    def __str__(self):
-        return f"{self.number} - {self.purchase_order.number}"
-    
-    def save(self, *args, **kwargs):
-        # Generate purchase receipt number if not provided
-        if not self.number:
-            last_receipt = PurchaseReceipt.objects.filter(
-                date__year=self.date.year
-            ).order_by('-number').first()
-            
-            if last_receipt and last_receipt.number.startswith(f"PR-{self.date.year}-"):
-                try:
-                    last_number = int(last_receipt.number.split('-')[-1])
-                    new_number = last_number + 1
-                except (IndexError, ValueError):
-                    new_number = 1
-            else:
-                new_number = 1
-            
-            self.number = f"PR-{self.date.year}-{new_number:05d}"
-        
-        super().save(*args, **kwargs)
-
-
-class PurchaseReceiptLine(models.Model):
-    """Purchase receipt line model"""
-    purchase_receipt = models.ForeignKey(
-        PurchaseReceipt,
-        on_delete=models.CASCADE,
-        related_name='lines'
-    )
-    purchase_order_line = models.ForeignKey(
-        PurchaseOrderLine,
-        on_delete=models.CASCADE,
-        related_name='receipt_lines'
-    )
-    quantity = models.DecimalField(_('quantity'), max_digits=10, decimal_places=2)
-    notes = models.TextField(_('notes'), blank=True)
-    
-    class Meta:
-        verbose_name = _('Purchase Receipt Line')
-        verbose_name_plural = _('Purchase Receipt Lines')
-    
-    def __str__(self):
-        return f"{self.purchase_receipt.number} - {self.purchase_order_line.product.name}"
-    
-    def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
-        
-        # Update purchase order line received quantity
-        po_line = self.purchase_order_line
-        total_received = sum(
-            line.quantity for line in po_line.receipt_lines.all()
-        )
-        po_line.received_quantity = total_received
-        po_line.save()
-        
-        # Update purchase order status
-        po = po_line.purchase_order
-        all_lines = po.lines.all()
-        total_quantity = sum(line.quantity for line in all_lines)
-        total_received = sum(line.received_quantity for line in all_lines)
-        
-        if total_received <= 0:
-            po.status = 'sent'
-        elif total_received < total_quantity:
-            po.status = 'partial'
-        else:
-            po.status = 'received'
-        
-        po.save()
-        
-        # Create stock entry
-        StockEntry.objects.create(
-            product=po_line.product,
-            warehouse=po.warehouse,
-            type='in',
-            quantity=self.quantity,
-            reference=f"Purchase Receipt {self.purchase_receipt.number}",
-            created_by=self.purchase_receipt.created_by
-        )
-
-
 class StockTransfer(models.Model):
     """Stock transfer model"""
     STATUS_CHOICES = (
@@ -609,6 +603,7 @@ class StockTransfer(models.Model):
         ('cancelled', _('Cancelled')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     number = models.CharField(_('number'), max_length=50, unique=True)
     date = models.DateField(_('date'))
     from_warehouse = models.ForeignKey(
@@ -666,9 +661,9 @@ class StockTransfer(models.Model):
         
         super().save(*args, **kwargs)
 
-
 class StockTransferLine(models.Model):
     """Stock transfer line model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     stock_transfer = models.ForeignKey(
         StockTransfer,
         on_delete=models.CASCADE,
@@ -679,7 +674,12 @@ class StockTransferLine(models.Model):
         on_delete=models.CASCADE,
         related_name='stock_transfer_lines'
     )
-    quantity = models.DecimalField(_('quantity'), max_digits=10, decimal_places=2)
+    quantity = models.DecimalField(
+        _('quantity'),
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
     notes = models.TextField(_('notes'), blank=True)
     
     class Meta:
@@ -714,7 +714,6 @@ class StockTransferLine(models.Model):
                 created_by=self.stock_transfer.created_by
             )
 
-
 class StockCount(models.Model):
     """Stock count model"""
     STATUS_CHOICES = (
@@ -724,6 +723,7 @@ class StockCount(models.Model):
         ('cancelled', _('Cancelled')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     number = models.CharField(_('number'), max_length=50, unique=True)
     date = models.DateField(_('date'))
     warehouse = models.ForeignKey(
@@ -776,9 +776,9 @@ class StockCount(models.Model):
         
         super().save(*args, **kwargs)
 
-
 class StockCountLine(models.Model):
     """Stock count line model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     stock_count = models.ForeignKey(
         StockCount,
         on_delete=models.CASCADE,
@@ -793,13 +793,14 @@ class StockCountLine(models.Model):
         _('system quantity'),
         max_digits=10,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     counted_quantity = models.DecimalField(
         _('counted quantity'),
         max_digits=10,
         decimal_places=2,
-        default=0
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     difference = models.DecimalField(
         _('difference'),

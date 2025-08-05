@@ -1,7 +1,8 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
-from core.models import User, Team
+from decimal import Decimal
+import uuid
 
 class Lead(models.Model):
     """Lead model for potential customers"""
@@ -21,6 +22,13 @@ class Lead(models.Model):
         ('other', _('Other')),
     )
     
+    RATING_CHOICES = (
+        (1, _('Hot')),
+        (2, _('Warm')),
+        (3, _('Cold')),
+    )
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     first_name = models.CharField(_('first name'), max_length=100)
     last_name = models.CharField(_('last name'), max_length=100)
     email = models.EmailField(_('email'), blank=True)
@@ -39,14 +47,21 @@ class Lead(models.Model):
         choices=SOURCE_CHOICES,
         default='website'
     )
+    rating = models.IntegerField(
+        _('rating'),
+        choices=RATING_CHOICES,
+        null=True,
+        blank=True
+    )
     description = models.TextField(_('description'), blank=True)
     assigned_to = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='assigned_leads'
     )
+    tags = models.CharField(_('tags'), max_length=255, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -69,7 +84,6 @@ class Lead(models.Model):
     def full_name(self):
         return f"{self.first_name} {self.last_name}"
 
-
 class Customer(models.Model):
     """Customer model"""
     TYPE_CHOICES = (
@@ -77,6 +91,13 @@ class Customer(models.Model):
         ('company', _('Company')),
     )
     
+    STATUS_CHOICES = (
+        ('active', _('Active')),
+        ('inactive', _('Inactive')),
+        ('prospect', _('Prospect')),
+    )
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     type = models.CharField(
         _('type'),
         max_length=20,
@@ -91,14 +112,21 @@ class Customer(models.Model):
     website = models.URLField(_('website'), blank=True)
     tax_id = models.CharField(_('tax ID'), max_length=50, blank=True)
     address = models.TextField(_('address'), blank=True)
-    notes = models.TextField(_('notes'), blank=True)
+    status = models.CharField(
+        _('status'),
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='active'
+    )
     assigned_to = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='assigned_customers'
     )
+    tags = models.CharField(_('tags'), max_length=255, blank=True)
+    notes = models.TextField(_('notes'), blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -125,9 +153,9 @@ class Customer(models.Model):
             return f"{self.first_name} {self.last_name}"
         return self.company_name
 
-
 class Contact(models.Model):
     """Contact model for customer contacts"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     customer = models.ForeignKey(
         Customer,
         on_delete=models.CASCADE,
@@ -138,6 +166,7 @@ class Contact(models.Model):
     position = models.CharField(_('position'), max_length=100, blank=True)
     email = models.EmailField(_('email'), blank=True)
     phone = models.CharField(_('phone'), max_length=20, blank=True)
+    mobile = models.CharField(_('mobile'), max_length=20, blank=True)
     is_primary = models.BooleanField(_('is primary'), default=False)
     notes = models.TextField(_('notes'), blank=True)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
@@ -155,7 +184,6 @@ class Contact(models.Model):
     def full_name(self):
         return f"{self.first_name} {self.last_name}"
 
-
 class Opportunity(models.Model):
     """Opportunity model"""
     STAGE_CHOICES = (
@@ -167,6 +195,13 @@ class Opportunity(models.Model):
         ('closed_lost', _('Closed Lost')),
     )
     
+    PRIORITY_CHOICES = (
+        ('low', _('Low')),
+        ('medium', _('Medium')),
+        ('high', _('High')),
+    )
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     customer = models.ForeignKey(
         Customer,
         on_delete=models.CASCADE,
@@ -180,27 +215,36 @@ class Opportunity(models.Model):
         choices=STAGE_CHOICES,
         default='qualification'
     )
+    priority = models.CharField(
+        _('priority'),
+        max_length=10,
+        choices=PRIORITY_CHOICES,
+        default='medium'
+    )
     amount = models.DecimalField(
         _('amount'),
         max_digits=15,
         decimal_places=2,
         null=True,
-        blank=True
+        blank=True,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     probability = models.IntegerField(
         _('probability'),
         default=50,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
         help_text=_('Probability percentage (0-100)')
     )
     expected_close_date = models.DateField(_('expected close date'), null=True, blank=True)
     actual_close_date = models.DateField(_('actual close date'), null=True, blank=True)
     assigned_to = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='assigned_opportunities'
     )
+    tags = models.CharField(_('tags'), max_length=255, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -218,7 +262,13 @@ class Opportunity(models.Model):
     
     def __str__(self):
         return f"{self.name} - {self.customer.name}"
-
+    
+    @property
+    def weighted_amount(self):
+        """Calculate weighted amount based on probability"""
+        if self.amount and self.probability:
+            return (self.amount * self.probability) / 100
+        return None
 
 class Quotation(models.Model):
     """Quotation model"""
@@ -230,6 +280,7 @@ class Quotation(models.Model):
         ('expired', _('Expired')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     opportunity = models.ForeignKey(
         Opportunity,
         on_delete=models.CASCADE,
@@ -255,29 +306,33 @@ class Quotation(models.Model):
         _('subtotal'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     tax_rate = models.DecimalField(
         _('tax rate'),
         max_digits=5,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     tax_amount = models.DecimalField(
         _('tax amount'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     total = models.DecimalField(
         _('total'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     notes = models.TextField(_('notes'), blank=True)
     assigned_to = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -306,10 +361,19 @@ class Quotation(models.Model):
         self.tax_amount = self.subtotal * (self.tax_rate / 100)
         self.total = self.subtotal + self.tax_amount
         super().save(*args, **kwargs)
-
+    
+    @property
+    def is_expired(self):
+        """Check if quotation is expired"""
+        return (
+            self.valid_until and 
+            self.valid_until < timezone.now().date() and 
+            self.status not in ['accepted', 'rejected']
+        )
 
 class QuotationItem(models.Model):
     """Quotation item model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     quotation = models.ForeignKey(
         Quotation,
         on_delete=models.CASCADE,
@@ -317,10 +381,40 @@ class QuotationItem(models.Model):
     )
     product_name = models.CharField(_('product name'), max_length=255)
     description = models.TextField(_('description'), blank=True)
-    quantity = models.DecimalField(_('quantity'), max_digits=10, decimal_places=2, default=1)
-    unit_price = models.DecimalField(_('unit price'), max_digits=15, decimal_places=2)
-    discount = models.DecimalField(_('discount'), max_digits=5, decimal_places=2, default=0)
-    total = models.DecimalField(_('total'), max_digits=15, decimal_places=2, default=0)
+    quantity = models.DecimalField(
+        _('quantity'),
+        max_digits=10,
+        decimal_places=2,
+        default=1,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    unit_price = models.DecimalField(
+        _('unit price'),
+        max_digits=15,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    discount = models.DecimalField(
+        _('discount'),
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('100.00'))]
+    )
+    tax_rate = models.DecimalField(
+        _('tax rate'),
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    total = models.DecimalField(
+        _('total'),
+        max_digits=15,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
     order = models.PositiveIntegerField(_('order'), default=0)
     
     class Meta:
@@ -329,13 +423,16 @@ class QuotationItem(models.Model):
         ordering = ['order']
     
     def __str__(self):
-        return f"{self.product_name} - {self.quotation.title}"
+        return f"{self.quotation.title} - {self.product_name}"
     
     def save(self, *args, **kwargs):
-        # Calculate total with discount
+        # Calculate total with discount and tax
         discount_amount = self.unit_price * (self.discount / 100)
         discounted_price = self.unit_price - discount_amount
-        self.total = self.quantity * discounted_price
+        line_total = self.quantity * discounted_price
+        tax_amount = line_total * (self.tax_rate / 100)
+        self.total = line_total + tax_amount
+        
         super().save(*args, **kwargs)
         
         # Update quotation subtotal
@@ -343,7 +440,6 @@ class QuotationItem(models.Model):
         subtotal = sum(item.total for item in quotation.items.all())
         quotation.subtotal = subtotal
         quotation.save()
-
 
 class Campaign(models.Model):
     """Campaign model"""
@@ -362,6 +458,7 @@ class Campaign(models.Model):
         ('other', _('Other')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     description = models.TextField(_('description'), blank=True)
     status = models.CharField(
@@ -383,17 +480,19 @@ class Campaign(models.Model):
         max_digits=15,
         decimal_places=2,
         null=True,
-        blank=True
+        blank=True,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     actual_cost = models.DecimalField(
         _('actual cost'),
         max_digits=15,
         decimal_places=2,
         null=True,
-        blank=True
+        blank=True,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     assigned_to = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -416,10 +515,24 @@ class Campaign(models.Model):
     
     def __str__(self):
         return self.name
-
+    
+    @property
+    def cost_variance(self):
+        """Calculate cost variance"""
+        if self.budget and self.actual_cost:
+            return self.actual_cost - self.budget
+        return None
+    
+    @property
+    def roi(self):
+        """Calculate Return on Investment"""
+        # This would need to be calculated based on actual revenue generated
+        # For now, return None
+        return None
 
 class EmailTemplate(models.Model):
     """Email template model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     subject = models.CharField(_('subject'), max_length=255)
     content = models.TextField(_('content'))
@@ -437,11 +550,10 @@ class EmailTemplate(models.Model):
     class Meta:
         verbose_name = _('Email Template')
         verbose_name_plural = _('Email Templates')
-        ordering = ['-created_at']
+        ordering = ['name']
     
     def __str__(self):
         return self.name
-
 
 class EmailCampaign(models.Model):
     """Email campaign model"""
@@ -453,6 +565,7 @@ class EmailCampaign(models.Model):
         ('failed', _('Failed')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     campaign = models.ForeignKey(
         Campaign,
         on_delete=models.CASCADE,
@@ -494,7 +607,6 @@ class EmailCampaign(models.Model):
     def __str__(self):
         return self.name
 
-
 class SalesActivity(models.Model):
     """Sales activity model"""
     TYPE_CHOICES = (
@@ -519,6 +631,7 @@ class SalesActivity(models.Model):
         ('cancelled', _('Cancelled')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     type = models.CharField(
         _('type'),
         max_length=20,
@@ -565,7 +678,7 @@ class SalesActivity(models.Model):
         blank=True
     )
     assigned_to = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -588,7 +701,15 @@ class SalesActivity(models.Model):
     
     def __str__(self):
         return f"{self.subject} - {self.assigned_to.get_full_name() if self.assigned_to else 'Unassigned'}"
-
+    
+    @property
+    def is_overdue(self):
+        """Check if activity is overdue"""
+        return (
+            self.due_date and 
+            self.due_date < timezone.now() and 
+            self.status not in ['completed', 'cancelled']
+        )
 
 class Commission(models.Model):
     """Commission model"""
@@ -599,8 +720,9 @@ class Commission(models.Model):
         ('cancelled', _('Cancelled')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='commissions'
     )
@@ -612,7 +734,8 @@ class Commission(models.Model):
     amount = models.DecimalField(
         _('amount'),
         max_digits=15,
-        decimal_places=2
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     percentage = models.DecimalField(
         _('percentage'),
@@ -629,7 +752,7 @@ class Commission(models.Model):
     paid_date = models.DateField(_('paid date'), null=True, blank=True)
     notes = models.TextField(_('notes'), blank=True)
     approved_by = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

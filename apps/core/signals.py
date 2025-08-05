@@ -1,11 +1,12 @@
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.utils import timezone
+from django.contrib.auth import get_user_model
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from .models import User, Role, UserRole, Notification
-from .serializers import NotificationSerializer
 
+User = get_user_model()
 
 @receiver(post_save, sender=UserRole)
 def user_role_assigned(sender, instance, created, **kwargs):
@@ -16,12 +17,12 @@ def user_role_assigned(sender, instance, created, **kwargs):
             title=_("New Role Assigned"),
             message=_("You have been assigned the role: {role}").format(role=instance.role.name),
             level='info',
-            icon='fas fa-user-tag'
+            icon='fas fa-user-tag',
+            data={'role_id': instance.role.id}
         )
         
         # Send real-time notification
         send_real_time_notification(notification)
-
 
 @receiver(post_delete, sender=UserRole)
 def user_role_removed(sender, instance, **kwargs):
@@ -31,12 +32,12 @@ def user_role_removed(sender, instance, **kwargs):
         title=_("Role Removed"),
         message=_("The role {role} has been removed from your account").format(role=instance.role.name),
         level='warning',
-        icon='fas fa-user-times'
+        icon='fas fa-user-times',
+        data={'role_id': instance.role.id}
     )
     
     # Send real-time notification
     send_real_time_notification(notification)
-
 
 @receiver(post_save, sender=User)
 def user_created(sender, instance, created, **kwargs):
@@ -45,23 +46,24 @@ def user_created(sender, instance, created, **kwargs):
         # Notify all admins
         admins = User.objects.filter(is_staff=True)
         for admin in admins:
-            notification = Notification.objects.create(
+            Notification.objects.create(
                 recipient=admin,
                 title=_("New User Created"),
                 message=_("A new user {user} has been created").format(user=instance.get_full_name() or instance.username),
                 level='info',
-                icon='fas fa-user-plus'
+                icon='fas fa-user-plus',
+                data={'user_id': instance.id}
             )
             
             # Send real-time notification
             send_real_time_notification(notification)
-
 
 def send_real_time_notification(notification):
     """Send real-time notification via WebSocket"""
     channel_layer = get_channel_layer()
     
     # Serialize notification
+    from .serializers import NotificationSerializer
     serializer = NotificationSerializer(notification)
     
     # Send to user's group

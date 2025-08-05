@@ -1,8 +1,9 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
-from core.models import User, Team
-from crm.models import Customer
+from django.core.validators import MinValueValidator, MaxValueValidator
+from decimal import Decimal
+import uuid
 
 class ServiceTicket(models.Model):
     """Service ticket model"""
@@ -28,6 +29,14 @@ class ServiceTicket(models.Model):
         ('other', _('Other')),
     )
     
+    IMPACT_CHOICES = (
+        ('low', _('Low')),
+        ('medium', _('Medium')),
+        ('high', _('High')),
+        ('critical', _('Critical')),
+    )
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(_('title'), max_length=255)
     description = models.TextField(_('description'))
     status = models.CharField(
@@ -48,8 +57,14 @@ class ServiceTicket(models.Model):
         choices=TYPE_CHOICES,
         default='technical'
     )
+    impact = models.CharField(
+        _('impact'),
+        max_length=20,
+        choices=IMPACT_CHOICES,
+        default='medium'
+    )
     customer = models.ForeignKey(
-        Customer,
+        'crm.Customer',
         on_delete=models.CASCADE,
         related_name='service_tickets'
     )
@@ -61,14 +76,21 @@ class ServiceTicket(models.Model):
         related_name='service_tickets'
     )
     assigned_to = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='assigned_service_tickets'
     )
     team = models.ForeignKey(
-        Team,
+        'core.Team',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='service_tickets'
+    )
+    sla = models.ForeignKey(
+        'SLA',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -107,10 +129,42 @@ class ServiceTicket(models.Model):
             self.closed_at = None
             
         super().save(*args, **kwargs)
-
+    
+    @property
+    def is_overdue(self):
+        """Check if ticket is overdue based on SLA"""
+        if not self.sla or self.status in ['resolved', 'closed']:
+            return False
+        
+        # Calculate due time based on SLA
+        if self.sla.business_hours_only:
+            # This would require business hours calculation
+            # For simplicity, we'll use a basic calculation
+            due_time = self.created_at + self.sla.resolution_time
+        else:
+            due_time = self.created_at + self.sla.resolution_time
+        
+        return timezone.now() > due_time
+    
+    @property
+    def time_to_resolve(self):
+        """Calculate time to resolve based on SLA"""
+        if not self.sla or self.status in ['resolved', 'closed']:
+            return None
+        
+        if self.sla.business_hours_only:
+            # This would require business hours calculation
+            # For simplicity, we'll use a basic calculation
+            due_time = self.created_at + self.sla.resolution_time
+        else:
+            due_time = self.created_at + self.sla.resolution_time
+        
+        remaining = due_time - timezone.now()
+        return remaining.total_seconds() if remaining.total_seconds() > 0 else 0
 
 class TicketComment(models.Model):
     """Ticket comment model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     ticket = models.ForeignKey(
         ServiceTicket,
         on_delete=models.CASCADE,
@@ -124,6 +178,7 @@ class TicketComment(models.Model):
     )
     content = models.TextField(_('content'))
     is_internal = models.BooleanField(_('is internal'), default=False)
+    is_private = models.BooleanField(_('is private'), default=False)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     updated_at = models.DateTimeField(_('updated at'), auto_now=True)
     
@@ -135,9 +190,9 @@ class TicketComment(models.Model):
     def __str__(self):
         return f"Comment on #{self.ticket.id} by {self.author.get_full_name() if self.author else 'Unknown'}"
 
-
 class TicketAttachment(models.Model):
     """Ticket attachment model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     ticket = models.ForeignKey(
         ServiceTicket,
         on_delete=models.CASCADE,
@@ -145,6 +200,8 @@ class TicketAttachment(models.Model):
     )
     file = models.FileField(_('file'), upload_to='ticket_attachments/')
     filename = models.CharField(_('filename'), max_length=255)
+    file_size = models.PositiveIntegerField(_('file size'), default=0)
+    content_type = models.CharField(_('content type'), max_length=100, blank=True)
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -160,10 +217,18 @@ class TicketAttachment(models.Model):
     
     def __str__(self):
         return f"{self.filename} - Ticket #{self.ticket.id}"
-
+    
+    def save(self, *args, **kwargs):
+        # Set file size and content type
+        if self.file:
+            self.file_size = self.file.size
+            self.content_type = self.file.content_type or 'application/octet-stream'
+        
+        super().save(*args, **kwargs)
 
 class TicketTimeLog(models.Model):
     """Ticket time log model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     ticket = models.ForeignKey(
         ServiceTicket,
         on_delete=models.CASCADE,
@@ -176,8 +241,14 @@ class TicketTimeLog(models.Model):
         blank=True
     )
     description = models.TextField(_('description'), blank=True)
-    hours = models.DecimalField(_('hours'), max_digits=10, decimal_places=2)
+    hours = models.DecimalField(
+        _('hours'),
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
     date = models.DateField(_('date'))
+    billable = models.BooleanField(_('billable'), default=True)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     
     class Meta:
@@ -188,13 +259,14 @@ class TicketTimeLog(models.Model):
     def __str__(self):
         return f"#{self.ticket.id} - {self.user.get_full_name() if self.user else 'Unknown'} - {self.hours}h"
 
-
 class RMA(models.Model):
     """RMA (Return Merchandise Authorization) model"""
     STATUS_CHOICES = (
         ('requested', _('Requested')),
         ('approved', _('Approved')),
         ('received', _('Received')),
+        ('diagnosing', _('Diagnosing')),
+        ('repairing', _('Repairing')),
         ('repaired', _('Repaired')),
         ('replaced', _('Replaced')),
         ('shipped', _('Shipped')),
@@ -202,6 +274,7 @@ class RMA(models.Model):
         ('cancelled', _('Cancelled')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     ticket = models.ForeignKey(
         ServiceTicket,
         on_delete=models.CASCADE,
@@ -217,6 +290,8 @@ class RMA(models.Model):
     product_name = models.CharField(_('product name'), max_length=255)
     serial_number = models.CharField(_('serial number'), max_length=100, blank=True)
     reason = models.TextField(_('reason'))
+    diagnosis = models.TextField(_('diagnosis'), blank=True)
+    resolution = models.TextField(_('resolution'), blank=True)
     notes = models.TextField(_('notes'), blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -236,7 +311,6 @@ class RMA(models.Model):
     def __str__(self):
         return f"{self.rma_number} - {self.product_name}"
 
-
 class ServiceCall(models.Model):
     """Service call model"""
     STATUS_CHOICES = (
@@ -246,6 +320,7 @@ class ServiceCall(models.Model):
         ('cancelled', _('Cancelled')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     ticket = models.ForeignKey(
         ServiceTicket,
         on_delete=models.CASCADE,
@@ -262,13 +337,15 @@ class ServiceCall(models.Model):
     scheduled_date = models.DateTimeField(_('scheduled date'))
     duration = models.DurationField(_('duration'), null=True, blank=True)
     technician = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='service_calls'
     )
     address = models.TextField(_('address'))
+    latitude = models.DecimalField(_('latitude'), max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(_('longitude'), max_digits=9, decimal_places=6, null=True, blank=True)
     notes = models.TextField(_('notes'), blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -288,7 +365,6 @@ class ServiceCall(models.Model):
     def __str__(self):
         return f"{self.title} - {self.scheduled_date}"
 
-
 class ServicePlan(models.Model):
     """Service plan model"""
     STATUS_CHOICES = (
@@ -301,11 +377,22 @@ class ServicePlan(models.Model):
         ('maintenance', _('Maintenance')),
         ('support', _('Support')),
         ('warranty', _('Warranty')),
+        ('sla', _('SLA')),
         ('other', _('Other')),
     )
     
+    FREQUENCY_CHOICES = (
+        ('one_time', _('One Time')),
+        ('daily', _('Daily')),
+        ('weekly', _('Weekly')),
+        ('monthly', _('Monthly')),
+        ('quarterly', _('Quarterly')),
+        ('yearly', _('Yearly')),
+    )
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     customer = models.ForeignKey(
-        Customer,
+        'crm.Customer',
         on_delete=models.CASCADE,
         related_name='service_plans'
     )
@@ -323,6 +410,12 @@ class ServicePlan(models.Model):
         choices=STATUS_CHOICES,
         default='active'
     )
+    frequency = models.CharField(
+        _('frequency'),
+        max_length=20,
+        choices=FREQUENCY_CHOICES,
+        default='one_time'
+    )
     start_date = models.DateField(_('start date'))
     end_date = models.DateField(_('end date'))
     price = models.DecimalField(
@@ -330,7 +423,8 @@ class ServicePlan(models.Model):
         max_digits=15,
         decimal_places=2,
         null=True,
-        blank=True
+        blank=True,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     auto_renew = models.BooleanField(_('auto renew'), default=False)
     notes = models.TextField(_('notes'), blank=True)
@@ -354,8 +448,8 @@ class ServicePlan(models.Model):
     
     @property
     def is_expired(self):
+        """Check if service plan is expired"""
         return self.end_date < timezone.now().date()
-
 
 class SLA(models.Model):
     """SLA (Service Level Agreement) model"""
@@ -366,6 +460,7 @@ class SLA(models.Model):
         ('urgent', _('Urgent')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     description = models.TextField(_('description'), blank=True)
     priority = models.CharField(
@@ -388,9 +483,9 @@ class SLA(models.Model):
     def __str__(self):
         return self.name
 
-
 class Region(models.Model):
     """Region model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     code = models.CharField(_('code'), max_length=20, unique=True)
     description = models.TextField(_('description'), blank=True)
@@ -406,9 +501,9 @@ class Region(models.Model):
     def __str__(self):
         return self.name
 
-
 class Zone(models.Model):
     """Zone model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     code = models.CharField(_('code'), max_length=20)
     region = models.ForeignKey(
@@ -430,11 +525,12 @@ class Zone(models.Model):
     def __str__(self):
         return f"{self.region.name} - {self.name}"
 
-
 class Skill(models.Model):
     """Skill model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     description = models.TextField(_('description'), blank=True)
+    category = models.CharField(_('category'), max_length=100, blank=True)
     is_active = models.BooleanField(_('is active'), default=True)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     updated_at = models.DateTimeField(_('updated at'), auto_now=True)
@@ -447,11 +543,11 @@ class Skill(models.Model):
     def __str__(self):
         return self.name
 
-
 class TechnicianSkill(models.Model):
     """Technician skill model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     technician = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='skills'
     )
@@ -463,10 +559,12 @@ class TechnicianSkill(models.Model):
     proficiency_level = models.IntegerField(
         _('proficiency level'),
         default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
         help_text=_('Proficiency level (1-5)')
     )
     certified = models.BooleanField(_('certified'), default=False)
     certification_date = models.DateField(_('certification date'), null=True, blank=True)
+    certification_expiry = models.DateField(_('certification expiry'), null=True, blank=True)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     
     class Meta:
@@ -476,3 +574,11 @@ class TechnicianSkill(models.Model):
     
     def __str__(self):
         return f"{self.technician.get_full_name()} - {self.skill.name}"
+    
+    @property
+    def is_certification_expired(self):
+        """Check if certification is expired"""
+        return (
+            self.certification_expiry and 
+            self.certification_expiry < timezone.now().date()
+        )

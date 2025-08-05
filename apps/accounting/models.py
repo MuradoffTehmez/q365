@@ -2,7 +2,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
 from decimal import Decimal
-from core.models import User, Organization
+import uuid
 
 class Account(models.Model):
     """Account model for chart of accounts"""
@@ -14,6 +14,7 @@ class Account(models.Model):
         ('expense', _('Expense')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     code = models.CharField(_('code'), max_length=20)
     name = models.CharField(_('name'), max_length=255)
     type = models.CharField(
@@ -55,7 +56,11 @@ class Account(models.Model):
         if self.parent:
             return f"{self.parent.full_name} > {self.name}"
         return self.name
-
+    
+    @property
+    def is_leaf(self):
+        """Check if account is a leaf node (no children)"""
+        return not self.children.exists()
 
 class JournalEntry(models.Model):
     """Journal entry model"""
@@ -65,6 +70,7 @@ class JournalEntry(models.Model):
         ('cancelled', _('Cancelled')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     number = models.CharField(_('number'), max_length=50, unique=True)
     date = models.DateField(_('date'))
     description = models.TextField(_('description'), blank=True)
@@ -132,13 +138,14 @@ class JournalEntry(models.Model):
         
         super().save(*args, **kwargs)
     
+    @property
     def is_balanced(self):
         """Check if journal entry is balanced (debit = credit)"""
         return self.total_debit == self.total_credit
 
-
 class JournalEntryLine(models.Model):
     """Journal entry line model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     journal_entry = models.ForeignKey(
         JournalEntry,
         on_delete=models.CASCADE,
@@ -154,13 +161,15 @@ class JournalEntryLine(models.Model):
         _('debit'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     credit = models.DecimalField(
         _('credit'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     
     class Meta:
@@ -169,7 +178,6 @@ class JournalEntryLine(models.Model):
     
     def __str__(self):
         return f"{self.journal_entry.number} - {self.account.full_code} {self.account.name}"
-
 
 class Transaction(models.Model):
     """Transaction model"""
@@ -181,6 +189,7 @@ class Transaction(models.Model):
         ('other', _('Other')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     number = models.CharField(_('number'), max_length=50, unique=True)
     date = models.DateField(_('date'))
     type = models.CharField(
@@ -192,7 +201,8 @@ class Transaction(models.Model):
     amount = models.DecimalField(
         _('amount'),
         max_digits=15,
-        decimal_places=2
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     reference = models.CharField(_('reference'), max_length=255, blank=True)
     journal_entry = models.ForeignKey(
@@ -213,7 +223,6 @@ class Transaction(models.Model):
     def __str__(self):
         return f"{self.number} - {self.date} - {self.amount}"
 
-
 class Invoice(models.Model):
     """Invoice model"""
     STATUS_CHOICES = (
@@ -230,6 +239,7 @@ class Invoice(models.Model):
         ('purchase', _('Purchase')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     number = models.CharField(_('number'), max_length=50, unique=True)
     type = models.CharField(
         _('type'),
@@ -254,31 +264,36 @@ class Invoice(models.Model):
         _('subtotal'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     tax_rate = models.DecimalField(
         _('tax rate'),
         max_digits=5,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     tax_amount = models.DecimalField(
         _('tax amount'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     total = models.DecimalField(
         _('total'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     paid_amount = models.DecimalField(
         _('paid amount'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     notes = models.TextField(_('notes'), blank=True)
     journal_entry = models.ForeignKey(
@@ -350,20 +365,49 @@ class Invoice(models.Model):
         """Get remaining amount to be paid"""
         return self.total - self.paid_amount
 
-
 class InvoiceLine(models.Model):
     """Invoice line model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     invoice = models.ForeignKey(
         Invoice,
         on_delete=models.CASCADE,
         related_name='lines'
     )
     description = models.CharField(_('description'), max_length=255)
-    quantity = models.DecimalField(_('quantity'), max_digits=10, decimal_places=2, default=1)
-    unit_price = models.DecimalField(_('unit price'), max_digits=15, decimal_places=2)
-    discount = models.DecimalField(_('discount'), max_digits=5, decimal_places=2, default=0)
-    tax_rate = models.DecimalField(_('tax rate'), max_digits=5, decimal_places=2, default=0)
-    total = models.DecimalField(_('total'), max_digits=15, decimal_places=2, default=0)
+    quantity = models.DecimalField(
+        _('quantity'),
+        max_digits=10,
+        decimal_places=2,
+        default=1,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    unit_price = models.DecimalField(
+        _('unit price'),
+        max_digits=15,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    discount = models.DecimalField(
+        _('discount'),
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('100.00'))]
+    )
+    tax_rate = models.DecimalField(
+        _('tax rate'),
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    total = models.DecimalField(
+        _('total'),
+        max_digits=15,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
     order = models.PositiveIntegerField(_('order'), default=0)
     
     class Meta:
@@ -390,7 +434,6 @@ class InvoiceLine(models.Model):
         invoice.subtotal = subtotal
         invoice.save()
 
-
 class Payment(models.Model):
     """Payment model"""
     METHOD_CHOICES = (
@@ -408,12 +451,14 @@ class Payment(models.Model):
         ('cancelled', _('Cancelled')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     number = models.CharField(_('number'), max_length=50, unique=True)
     date = models.DateField(_('date'))
     amount = models.DecimalField(
         _('amount'),
         max_digits=15,
-        decimal_places=2
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
     )
     method = models.CharField(
         _('method'),
@@ -492,7 +537,6 @@ class Payment(models.Model):
             invoice.paid_amount = total_paid
             invoice.save()
 
-
 class Expense(models.Model):
     """Expense model"""
     STATUS_CHOICES = (
@@ -503,13 +547,15 @@ class Expense(models.Model):
         ('paid', _('Paid')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     number = models.CharField(_('number'), max_length=50, unique=True)
     date = models.DateField(_('date'))
     description = models.TextField(_('description'))
     amount = models.DecimalField(
         _('amount'),
         max_digits=15,
-        decimal_places=2
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
     )
     status = models.CharField(
         _('status'),
@@ -578,9 +624,9 @@ class Expense(models.Model):
         
         super().save(*args, **kwargs)
 
-
 class ExpenseCategory(models.Model):
     """Expense category model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     code = models.CharField(_('code'), max_length=20, unique=True)
     description = models.TextField(_('description'), blank=True)
@@ -601,7 +647,6 @@ class ExpenseCategory(models.Model):
     def __str__(self):
         return f"{self.code} - {self.name}"
 
-
 class Budget(models.Model):
     """Budget model"""
     PERIOD_CHOICES = (
@@ -616,6 +661,7 @@ class Budget(models.Model):
         ('closed', _('Closed')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     description = models.TextField(_('description'), blank=True)
     period = models.CharField(
@@ -639,16 +685,18 @@ class Budget(models.Model):
     amount = models.DecimalField(
         _('amount'),
         max_digits=15,
-        decimal_places=2
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     actual_amount = models.DecimalField(
         _('actual amount'),
         max_digits=15,
         decimal_places=2,
-        default=0
+        default=0,
+        validators=[MinValueValidator(Decimal('0.00'))]
     )
     organization = models.ForeignKey(
-        Organization,
+        'core.Organization',
         on_delete=models.CASCADE,
         related_name='budgets'
     )
@@ -681,7 +729,13 @@ class Budget(models.Model):
         if self.amount == 0:
             return 0
         return (self.variance / self.amount) * 100
-
+    
+    @property
+    def utilization_percentage(self):
+        """Get budget utilization percentage"""
+        if self.amount == 0:
+            return 0
+        return (self.actual_amount / self.amount) * 100
 
 class BankAccount(models.Model):
     """Bank account model"""
@@ -692,6 +746,7 @@ class BankAccount(models.Model):
         ('other', _('Other')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=255)
     account_number = models.CharField(_('account number'), max_length=50)
     bank_name = models.CharField(_('bank name'), max_length=255)
@@ -714,7 +769,7 @@ class BankAccount(models.Model):
         related_name='bank_accounts'
     )
     organization = models.ForeignKey(
-        Organization,
+        'core.Organization',
         on_delete=models.CASCADE,
         related_name='bank_accounts'
     )
@@ -729,9 +784,9 @@ class BankAccount(models.Model):
     def __str__(self):
         return f"{self.name} - {self.bank_name}"
 
-
 class Tax(models.Model):
     """Tax model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     rate = models.DecimalField(
         _('rate'),

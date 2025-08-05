@@ -2,16 +2,17 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import RegexValidator
-
+from django.conf import settings
+import uuid
 
 class User(AbstractUser):
     """Custom User model with additional fields"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(_('email address'), unique=True)
     phone = models.CharField(
         _('phone number'),
         max_length=20,
         blank=True,
-        null=True,
         validators=[RegexValidator(
             regex=r'^\+?1?\d{9,15}$',
             message=_("Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed.")
@@ -25,11 +26,15 @@ class User(AbstractUser):
         blank=True,
         related_name='users'
     )
-    position = models.CharField(_('position'), max_length=100, blank=True, null=True)
+    position = models.CharField(_('position'), max_length=100, blank=True)
     employee_id = models.CharField(_('employee ID'), max_length=20, blank=True, null=True, unique=True)
     is_active_employee = models.BooleanField(_('is active employee'), default=True)
     hire_date = models.DateField(_('hire date'), blank=True, null=True)
     termination_date = models.DateField(_('termination date'), blank=True, null=True)
+    last_login_ip = models.GenericIPAddressField(_('last login IP'), blank=True, null=True)
+    failed_login_attempts = models.PositiveIntegerField(_('failed login attempts'), default=0)
+    is_locked = models.BooleanField(_('is locked'), default=False)
+    locked_until = models.DateTimeField(_('locked until'), blank=True, null=True)
     
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username']
@@ -40,7 +45,21 @@ class User(AbstractUser):
     
     def __str__(self):
         return self.get_full_name() or self.username
-
+    
+    def lock_account(self, minutes=30):
+        """Lock user account for specified minutes"""
+        from django.utils import timezone
+        from datetime import timedelta
+        self.is_locked = True
+        self.locked_until = timezone.now() + timedelta(minutes=minutes)
+        self.save()
+    
+    def unlock_account(self):
+        """Unlock user account"""
+        self.is_locked = False
+        self.locked_until = None
+        self.failed_login_attempts = 0
+        self.save()
 
 class Role(models.Model):
     """Role model for role-based access control"""
@@ -52,6 +71,7 @@ class Role(models.Model):
         blank=True,
         related_name='roles'
     )
+    is_active = models.BooleanField(_('is active'), default=True)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     updated_at = models.DateTimeField(_('updated at'), auto_now=True)
     
@@ -62,12 +82,13 @@ class Role(models.Model):
     def __str__(self):
         return self.name
 
-
 class Permission(models.Model):
     """Custom permission model for fine-grained access control"""
     name = models.CharField(_('name'), max_length=100)
     codename = models.CharField(_('codename'), max_length=100, unique=True)
     description = models.TextField(_('description'), blank=True)
+    module = models.CharField(_('module'), max_length=50, blank=True)
+    is_active = models.BooleanField(_('is active'), default=True)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     updated_at = models.DateTimeField(_('updated at'), auto_now=True)
     
@@ -77,7 +98,6 @@ class Permission(models.Model):
     
     def __str__(self):
         return self.name
-
 
 class UserRole(models.Model):
     """User-Role relationship model"""
@@ -99,6 +119,8 @@ class UserRole(models.Model):
         related_name='assigned_roles'
     )
     assigned_at = models.DateTimeField(_('assigned at'), auto_now_add=True)
+    expires_at = models.DateTimeField(_('expires at'), blank=True, null=True)
+    is_active = models.BooleanField(_('is active'), default=True)
     
     class Meta:
         verbose_name = _('User Role')
@@ -107,10 +129,16 @@ class UserRole(models.Model):
     
     def __str__(self):
         return f"{self.user} - {self.role}"
-
+    
+    @property
+    def is_expired(self):
+        """Check if role assignment is expired"""
+        from django.utils import timezone
+        return self.expires_at and self.expires_at < timezone.now()
 
 class Organization(models.Model):
     """Top-level organization model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     code = models.CharField(_('code'), max_length=20, unique=True)
     address = models.TextField(_('address'), blank=True)
@@ -127,6 +155,7 @@ class Organization(models.Model):
         blank=True,
         related_name='children'
     )
+    settings = models.JSONField(_('settings'), default=dict, blank=True)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     updated_at = models.DateTimeField(_('updated at'), auto_now=True)
     
@@ -137,9 +166,9 @@ class Organization(models.Model):
     def __str__(self):
         return self.name
 
-
 class Department(models.Model):
     """Department model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     code = models.CharField(_('code'), max_length=20)
     organization = models.ForeignKey(
@@ -174,9 +203,9 @@ class Department(models.Model):
     def __str__(self):
         return f"{self.organization.name} - {self.name}"
 
-
 class Sector(models.Model):
     """Sector model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     code = models.CharField(_('code'), max_length=20)
     department = models.ForeignKey(
@@ -204,9 +233,9 @@ class Sector(models.Model):
     def __str__(self):
         return f"{self.department.name} - {self.name}"
 
-
 class Team(models.Model):
     """Team model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_('name'), max_length=100)
     code = models.CharField(_('code'), max_length=20)
     sector = models.ForeignKey(
@@ -239,7 +268,6 @@ class Team(models.Model):
     def __str__(self):
         return f"{self.sector.name} - {self.name}"
 
-
 class Notification(models.Model):
     """Notification model"""
     LEVEL_CHOICES = (
@@ -249,6 +277,7 @@ class Notification(models.Model):
         ('error', _('Error')),
     )
     
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     recipient = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -267,6 +296,7 @@ class Notification(models.Model):
     read_at = models.DateTimeField(_('read at'), null=True, blank=True)
     link = models.URLField(_('link'), blank=True)
     icon = models.CharField(_('icon'), max_length=50, blank=True)
+    data = models.JSONField(_('data'), default=dict, blank=True)
     
     class Meta:
         verbose_name = _('Notification')
@@ -276,9 +306,9 @@ class Notification(models.Model):
     def __str__(self):
         return f"{self.recipient} - {self.title}"
 
-
 class Reminder(models.Model):
     """Reminder model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -291,6 +321,7 @@ class Reminder(models.Model):
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     completed_at = models.DateTimeField(_('completed at'), null=True, blank=True)
     link = models.URLField(_('link'), blank=True)
+    data = models.JSONField(_('data'), default=dict, blank=True)
     
     class Meta:
         verbose_name = _('Reminder')
